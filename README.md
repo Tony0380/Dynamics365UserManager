@@ -1,5 +1,7 @@
 # Dynamics 365 User Manager
 
+[![Build & Release](https://github.com/Tony0380/Dynamics365UserManager/actions/workflows/release.yml/badge.svg)](https://github.com/Tony0380/Dynamics365UserManager/actions/workflows/release.yml)
+
 Applicazione Windows Forms (.NET Framework 4.6.2) per la gestione utenti in ambienti Microsoft Dynamics 365.
 
 ## Funzionalita
