@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.Identity.Client;
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.WebServiceClient;
 using Microsoft.Xrm.Tooling.Connector;
 using Newtonsoft.Json.Linq;
 
@@ -162,38 +163,23 @@ namespace Dynamics365UserManager
             string[] crmScopes = { resource + ".default" };
 
             var accounts = await _msalApp.GetAccountsAsync();
-            AuthenticationResult result;
-
+            AuthenticationResult authResult;
             try
             {
-                result = await _msalApp.AcquireTokenSilent(crmScopes, accounts.FirstOrDefault())
+                authResult = await _msalApp.AcquireTokenSilent(crmScopes, accounts.FirstOrDefault())
                     .ExecuteAsync();
             }
             catch (MsalUiRequiredException)
             {
-                result = await _msalApp.AcquireTokenInteractive(crmScopes)
+                authResult = await _msalApp.AcquireTokenInteractive(crmScopes)
                     .ExecuteAsync();
             }
 
-            var connString = $"AuthType=OAuth;Url={envUrl};" +
-                             $"AppId={ClientId};" +
-                             $"RedirectUri=http://localhost;" +
-                             $"TokenCacheStorePath={_tokenCachePath};" +
-                             $"LoginPrompt=Never;" +
-                             $"RequireNewInstance=True";
+            var serviceUri = new Uri(envUrl + "/XRMServices/2011/Organization.svc/web");
+            var proxy = new OrganizationWebProxyClient(serviceUri, false);
+            proxy.HeaderToken = authResult.AccessToken;
 
-            _serviceClient = new CrmServiceClient(connString);
-
-            if (!_serviceClient.IsReady)
-            {
-                // Fallback: use access token directly via connection string
-                var tokenConnString = $"AuthType=OAuth;Url={envUrl};" +
-                                      $"AppId={ClientId};" +
-                                      $"RedirectUri=http://localhost;" +
-                                      $"AccessToken={result.AccessToken};" +
-                                      $"RequireNewInstance=True";
-                _serviceClient = new CrmServiceClient(tokenConnString);
-            }
+            _serviceClient = new CrmServiceClient(proxy);
 
             if (!_serviceClient.IsReady)
             {
