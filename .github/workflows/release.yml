@@ -1,0 +1,40 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore Dynamics365UserManager.sln
+
+      - name: Install Costura.Fody
+        run: nuget install Costura.Fody -Version 5.7.0 -OutputDirectory packages
+        working-directory: Dynamics365UserManager
+
+      - name: Build Release
+        run: msbuild Dynamics365UserManager.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dynamics365UserManager
+          path: Dynamics365UserManager/bin/Release/Dynamics365UserManager.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Dynamics365UserManager/bin/Release/Dynamics365UserManager.exe
+          generate_release_notes: true
