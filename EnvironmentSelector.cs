@@ -3,16 +3,14 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
-using MaterialSkin;
-using MaterialSkin.Controls;
 
 namespace Dynamics365UserManager
 {
-    public class EnvironmentSelector : MaterialForm
+    public class EnvironmentSelector : Form
     {
-        private MaterialListView listView;
-        private MaterialTextBox2 filterBox;
-        private MaterialButton btnConnect, btnCancel;
+        private ListView listView;
+        private TextBox filterBox;
+        private Button btnConnect, btnCancel;
         private List<EnvironmentInfo> _allEnvironments;
 
         public EnvironmentInfo SelectedEnvironment { get; private set; }
@@ -21,41 +19,52 @@ namespace Dynamics365UserManager
         {
             _allEnvironments = environments;
 
-            var skin = MaterialSkinManager.Instance;
-            skin.AddFormToManage(this);
-
             Text = "Seleziona Ambiente";
-            Size = new Size(800, 530);
-            MinimumSize = new Size(800, 530);
+            Size = new Size(800, 480);
+            MinimumSize = new Size(600, 350);
             StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            Sizable = false;
+            BackColor = AppTheme.FormBg;
 
-            int top = 64;
+            int top = 12;
 
-            filterBox = new MaterialTextBox2
+            filterBox = new TextBox
             {
-                Hint = "Filtra ambienti...",
                 Location = new Point(12, top),
-                Size = new Size(400, 48)
+                Size = new Size(400, 28),
+                Font = new Font("Segoe UI", 10f),
+                BackColor = AppTheme.InputBg,
+                ForeColor = AppTheme.FgPlaceholder,
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = "Filtra ambienti..."
             };
-            filterBox.TextChanged += (s, e) => PopulateList(
-                _allEnvironments.Where(env =>
-                    env.FriendlyName != null &&
-                    env.FriendlyName.IndexOf(filterBox.Text, StringComparison.OrdinalIgnoreCase) >= 0)
-                .ToList());
+            filterBox.GotFocus += (s, e) => { if (filterBox.ForeColor == AppTheme.FgPlaceholder || filterBox.ForeColor == Color.Gray) { filterBox.ForeColor = AppTheme.FgPrimary; filterBox.Text = ""; } };
+            filterBox.LostFocus += (s, e) => { if (string.IsNullOrWhiteSpace(filterBox.Text)) { filterBox.ForeColor = AppTheme.FgPlaceholder; filterBox.Text = "Filtra ambienti..."; } };
+            filterBox.TextChanged += (s, e) =>
+            {
+                if (filterBox.ForeColor == AppTheme.FgPlaceholder || filterBox.ForeColor == Color.Gray) return;
+                PopulateList(
+                    _allEnvironments.Where(env =>
+                        env.FriendlyName != null &&
+                        env.FriendlyName.IndexOf(filterBox.Text, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .ToList());
+            };
             Controls.Add(filterBox);
 
-            top += 56;
+            top += 40;
 
-            listView = new MaterialListView
+            listView = new ListView
             {
                 Location = new Point(12, top),
-                Size = new Size(760, 310),
+                Size = new Size(ClientSize.Width - 24, ClientSize.Height - top - 56),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = false,
-                MultiSelect = false
+                MultiSelect = false,
+                BackColor = AppTheme.ListBg,
+                ForeColor = AppTheme.FgPrimary,
+                Font = new Font("Segoe UI", 9f),
+                BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
             };
             listView.Columns.Add("Nome", 220);
             listView.Columns.Add("Tipo", 80);
@@ -65,34 +74,56 @@ namespace Dynamics365UserManager
             listView.DoubleClick += (s, e) => { if (listView.SelectedItems.Count > 0) SelectAndClose(); };
             Controls.Add(listView);
 
-            top += 318;
+            var btnFont = new Font("Segoe UI", 8.5f, FontStyle.Bold);
 
-            btnCancel = new MaterialButton
+            btnCancel = new Button
             {
                 Text = "ANNULLA",
-                Location = new Point(560, top),
-                Size = new Size(100, 36),
+                Size = new Size(Math.Max(100, TextRenderer.MeasureText("ANNULLA", btnFont).Width + 24), 36),
                 AutoSize = false,
-                Type = MaterialButton.MaterialButtonType.Outlined,
-                DialogResult = DialogResult.Cancel
+                FlatStyle = FlatStyle.Flat,
+                Font = btnFont,
+                ForeColor = AppTheme.FgPrimary,
+                BackColor = AppTheme.BtnBg,
+                DialogResult = DialogResult.Cancel,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom
             };
+            btnCancel.FlatAppearance.BorderColor = AppTheme.Border;
+            btnCancel.FlatAppearance.BorderSize = 1;
+            btnCancel.FlatAppearance.MouseOverBackColor = AppTheme.BtnHover;
             Controls.Add(btnCancel);
 
-            btnConnect = new MaterialButton
+            btnConnect = new Button
             {
                 Text = "CONNETTI",
-                Location = new Point(670, top),
-                Size = new Size(100, 36),
+                Size = new Size(Math.Max(100, TextRenderer.MeasureText("CONNETTI", btnFont).Width + 24), 36),
                 AutoSize = false,
-                Type = MaterialButton.MaterialButtonType.Contained
+                FlatStyle = FlatStyle.Flat,
+                Font = btnFont,
+                ForeColor = Color.White,
+                BackColor = AppTheme.AccentBlue,
+                Anchor = AnchorStyles.Right | AnchorStyles.Bottom
             };
+            btnConnect.FlatAppearance.BorderColor = AppTheme.AccentBlue;
+            btnConnect.FlatAppearance.BorderSize = 1;
+            btnConnect.FlatAppearance.MouseOverBackColor = AppTheme.AccentHover;
             btnConnect.Click += (s, e) => SelectAndClose();
             Controls.Add(btnConnect);
 
             AcceptButton = btnConnect;
             CancelButton = btnCancel;
 
+            PositionButtons();
+            Resize += (s, e) => PositionButtons();
+
             PopulateList(environments);
+        }
+
+        private void PositionButtons()
+        {
+            int btnY = ClientSize.Height - 44;
+            btnCancel.Location = new Point(ClientSize.Width - 220, btnY);
+            btnConnect.Location = new Point(ClientSize.Width - 112, btnY);
         }
 
         private void PopulateList(List<EnvironmentInfo> environments)

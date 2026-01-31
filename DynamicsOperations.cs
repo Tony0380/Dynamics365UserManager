@@ -28,6 +28,7 @@ namespace Dynamics365UserManager
         public Guid Id { get; set; }
         public string Name { get; set; }
         public bool IsDefault { get; set; }
+        public string BusinessUnitName { get; set; }
     }
 
     public class BusinessUnitInfo
@@ -517,6 +518,292 @@ namespace Dynamics365UserManager
 
                 result.Success = true;
                 result.Message = $"Riassegnazione completata. {totalReassigned} record totali.";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Message = $"Errore: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        // ─────────── Security Roles ───────────
+
+        public static List<RoleInfo> SearchRoles(IOrganizationService service, string searchText)
+        {
+            var query = new QueryExpression("role")
+            {
+                ColumnSet = new ColumnSet("name", "businessunitid"),
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("name", ConditionOperator.Like, $"%{searchText}%")
+                    }
+                },
+                TopCount = 100,
+                Orders = { new OrderExpression("name", OrderType.Ascending) }
+            };
+
+            var results = service.RetrieveMultiple(query);
+            return results.Entities.Select(e => new RoleInfo
+            {
+                Id = e.Id,
+                Name = e.GetAttributeValue<string>("name") ?? "",
+                BusinessUnitId = e.GetAttributeValue<EntityReference>("businessunitid")?.Id ?? Guid.Empty
+            }).ToList();
+        }
+
+        public static List<UserInfo> GetUsersWithRole(IOrganizationService service, Guid roleId)
+        {
+            var query = new QueryExpression("systemuser")
+            {
+                ColumnSet = new ColumnSet("fullname", "internalemailaddress", "businessunitid"),
+                LinkEntities =
+                {
+                    new LinkEntity("systemuser", "systemuserroles", "systemuserid", "systemuserid", JoinOperator.Inner)
+                    {
+                        LinkCriteria = new FilterExpression
+                        {
+                            Conditions =
+                            {
+                                new ConditionExpression("roleid", ConditionOperator.Equal, roleId)
+                            }
+                        }
+                    }
+                },
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("isdisabled", ConditionOperator.Equal, false)
+                    }
+                },
+                Orders = { new OrderExpression("fullname", OrderType.Ascending) }
+            };
+
+            var results = service.RetrieveMultiple(query);
+            return results.Entities.Select(e =>
+            {
+                var buRef = e.GetAttributeValue<EntityReference>("businessunitid");
+                return new UserInfo
+                {
+                    Id = e.Id,
+                    FullName = e.GetAttributeValue<string>("fullname") ?? "",
+                    Email = e.GetAttributeValue<string>("internalemailaddress") ?? "",
+                    BusinessUnitId = buRef?.Id ?? Guid.Empty,
+                    BusinessUnitName = buRef?.Name ?? ""
+                };
+            }).ToList();
+        }
+
+        public static OperationResult AssignRoleToUsers(IOrganizationService service, Guid roleId, string roleName, List<Guid> userIds, Action<string> log)
+        {
+            var result = new OperationResult();
+            int assigned = 0;
+
+            try
+            {
+                foreach (var userId in userIds)
+                {
+                    try
+                    {
+                        service.Associate("systemuser", userId,
+                            new Relationship("systemuserroles_association"),
+                            new EntityReferenceCollection { new EntityReference("role", roleId) });
+                        assigned++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log($"  Errore assegnazione a utente {userId}: {ex.Message}");
+                    }
+                }
+
+                result.Success = true;
+                result.Message = $"Ruolo '{roleName}' assegnato a {assigned}/{userIds.Count} utenti.";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Message = $"Errore: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        public static OperationResult RemoveRoleFromUsers(IOrganizationService service, Guid roleId, string roleName, List<Guid> userIds, Action<string> log)
+        {
+            var result = new OperationResult();
+            int removed = 0;
+
+            try
+            {
+                foreach (var userId in userIds)
+                {
+                    try
+                    {
+                        service.Disassociate("systemuser", userId,
+                            new Relationship("systemuserroles_association"),
+                            new EntityReferenceCollection { new EntityReference("role", roleId) });
+                        removed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log($"  Errore rimozione da utente {userId}: {ex.Message}");
+                    }
+                }
+
+                result.Success = true;
+                result.Message = $"Ruolo '{roleName}' rimosso da {removed}/{userIds.Count} utenti.";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Message = $"Errore: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        // ─────────── Teams ───────────
+
+        public static List<TeamInfo> SearchTeams(IOrganizationService service, string searchText)
+        {
+            var query = new QueryExpression("team")
+            {
+                ColumnSet = new ColumnSet("name", "isdefault", "businessunitid"),
+                Criteria = new FilterExpression(LogicalOperator.And)
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("name", ConditionOperator.Like, $"%{searchText}%"),
+                        new ConditionExpression("teamtype", ConditionOperator.Equal, 0)
+                    }
+                },
+                TopCount = 100,
+                Orders = { new OrderExpression("name", OrderType.Ascending) }
+            };
+
+            var results = service.RetrieveMultiple(query);
+            return results.Entities.Select(e =>
+            {
+                var buRef = e.GetAttributeValue<EntityReference>("businessunitid");
+                return new TeamInfo
+                {
+                    Id = e.Id,
+                    Name = e.GetAttributeValue<string>("name") ?? "",
+                    IsDefault = e.GetAttributeValue<bool>("isdefault"),
+                    BusinessUnitName = buRef?.Name ?? ""
+                };
+            }).ToList();
+        }
+
+        public static List<UserInfo> GetTeamMembers(IOrganizationService service, Guid teamId)
+        {
+            var query = new QueryExpression("systemuser")
+            {
+                ColumnSet = new ColumnSet("fullname", "internalemailaddress", "businessunitid"),
+                LinkEntities =
+                {
+                    new LinkEntity("systemuser", "teammembership", "systemuserid", "systemuserid", JoinOperator.Inner)
+                    {
+                        LinkCriteria = new FilterExpression
+                        {
+                            Conditions =
+                            {
+                                new ConditionExpression("teamid", ConditionOperator.Equal, teamId)
+                            }
+                        }
+                    }
+                },
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("isdisabled", ConditionOperator.Equal, false)
+                    }
+                },
+                Orders = { new OrderExpression("fullname", OrderType.Ascending) }
+            };
+
+            var results = service.RetrieveMultiple(query);
+            return results.Entities.Select(e =>
+            {
+                var buRef = e.GetAttributeValue<EntityReference>("businessunitid");
+                return new UserInfo
+                {
+                    Id = e.Id,
+                    FullName = e.GetAttributeValue<string>("fullname") ?? "",
+                    Email = e.GetAttributeValue<string>("internalemailaddress") ?? "",
+                    BusinessUnitId = buRef?.Id ?? Guid.Empty,
+                    BusinessUnitName = buRef?.Name ?? ""
+                };
+            }).ToList();
+        }
+
+        public static OperationResult AddUsersToTeam(IOrganizationService service, Guid teamId, string teamName, List<Guid> userIds, Action<string> log)
+        {
+            var result = new OperationResult();
+            int added = 0;
+
+            try
+            {
+                foreach (var userId in userIds)
+                {
+                    try
+                    {
+                        service.Execute(new AddMembersTeamRequest
+                        {
+                            TeamId = teamId,
+                            MemberIds = new[] { userId }
+                        });
+                        added++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log($"  Errore aggiunta utente {userId}: {ex.Message}");
+                    }
+                }
+
+                result.Success = true;
+                result.Message = $"{added}/{userIds.Count} utenti aggiunti al team '{teamName}'.";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Message = $"Errore: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        public static OperationResult RemoveUsersFromTeam(IOrganizationService service, Guid teamId, string teamName, List<Guid> userIds, Action<string> log)
+        {
+            var result = new OperationResult();
+            int removed = 0;
+
+            try
+            {
+                foreach (var userId in userIds)
+                {
+                    try
+                    {
+                        service.Execute(new RemoveMembersTeamRequest
+                        {
+                            TeamId = teamId,
+                            MemberIds = new[] { userId }
+                        });
+                        removed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log($"  Errore rimozione utente {userId}: {ex.Message}");
+                    }
+                }
+
+                result.Success = true;
+                result.Message = $"{removed}/{userIds.Count} utenti rimossi dal team '{teamName}'.";
             }
             catch (Exception ex)
             {
