@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Diagnostics;
-using System.Net;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -22,7 +21,6 @@ namespace Dynamics365UserManager
         private TabControl tabControl;
 
         // Tab 1
-        private Label _lblRolesHeader;
         private TextBox txtBUSearch;
         private Button btnBUSearch;
         private ListView lvUsers, lvRoles;
@@ -54,7 +52,6 @@ namespace Dynamics365UserManager
         private TextBox txtRoleUserSearch;
         private Button btnRoleUserSearch, btnAssignRole, btnRemoveRole;
         private ListView lvRoleUserResults;
-        private Label lblRoleAssignHeader;
 
         // Tab 5
         private TextBox txtTeamSearch;
@@ -63,7 +60,13 @@ namespace Dynamics365UserManager
         private TextBox txtTeamUserSearch;
         private Button btnTeamUserSearch, btnAddToTeam, btnRemoveFromTeam;
         private ListView lvTeamUserResults;
-        private Label lblTeamAddHeader;
+
+        // Tab 6 – Role Finder
+        private ComboBox cbRFEntity, cbRFPermission, cbRFDepth;
+        private Button btnRFAdd, btnRFRemove, btnRFSearch;
+        private ListView lvRFRequirements, lvRFResults;
+        private NumericUpDown nudRFMaxRoles;
+        private readonly List<PrivilegeRequirement> _rfRequirements = new List<PrivilegeRequirement>();
 
         // Log
         private RichTextBox rtbLog;
@@ -73,114 +76,120 @@ namespace Dynamics365UserManager
 
         public MainForm()
         {
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
             Text = "Dynamics 365 User Manager";
             Size = new Size(1050, 780);
-            MinimumSize = new Size(1050, 780);
+            MinimumSize = new Size(900, 600);
             StartPosition = FormStartPosition.CenterScreen;
             MaximizeBox = true;
             FormBorderStyle = FormBorderStyle.Sizable;
-
             BuildUI();
         }
 
         private void BuildUI()
         {
-            int top = 8;
+            SuspendLayout();
 
-            // ── Connection row ──
-            btnConnect = MBtn("CONNETTI", new Point(14, top + 6), 100, true);
+            // ── Bottom: Log area ──
+            var logPanel = new Panel { Dock = DockStyle.Bottom, Height = 190, Padding = new Padding(6, 0, 6, 6) };
+
+            var logToolbar = new Panel { Dock = DockStyle.Top, Height = 36 };
+            var btnClear = MBtn("PULISCI LOG", 130);
+            btnClear.Location = new Point(0, 2);
+            btnClear.Click += (s, e) => rtbLog.Clear();
+            logToolbar.Controls.Add(btnClear);
+
+            lblCredits = new LinkLabel
+            {
+                Text = "Creato da Antonio Colamartino",
+                AutoSize = true,
+                Font = new Font("Segoe UI", 8.5f),
+                LinkColor = AppTheme.Link,
+                VisitedLinkColor = AppTheme.Link,
+                ActiveLinkColor = AppTheme.LinkActive,
+                BackColor = Color.Transparent,
+                Location = new Point(800, 8),
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            lblCredits.LinkClicked += (s, e) =>
+                Process.Start(new ProcessStartInfo("https://antoniocolamartino.it") { UseShellExecute = true });
+            logToolbar.Controls.Add(lblCredits);
+
+            rtbLog = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                BackColor = AppTheme.LogBg,
+                ForeColor = AppTheme.LogFg,
+                Font = new Font("Consolas", 9f),
+                BorderStyle = BorderStyle.None
+            };
+
+            logPanel.Controls.Add(rtbLog);
+            logPanel.Controls.Add(logToolbar);
+
+            // ── Top: Connection bar ──
+            var connPanel = new Panel { Dock = DockStyle.Top, Height = 48 };
+
+            btnConnect = MBtn("CONNETTI", 100, true);
+            btnConnect.Location = new Point(8, 6);
             btnConnect.Click += async (s, e) => await ConnectAsync();
-            Controls.Add(btnConnect);
+            connPanel.Controls.Add(btnConnect);
 
-            btnDisconnect = MBtn("DISCONNETTI", new Point(btnConnect.Right + 6, top + 6), 120);
+            btnDisconnect = MBtn("DISCONNETTI", 120);
+            btnDisconnect.Location = new Point(btnConnect.Right + 6, 6);
             btnDisconnect.Enabled = false;
             btnDisconnect.Click += (s, e) => Disconnect();
-            Controls.Add(btnDisconnect);
+            connPanel.Controls.Add(btnDisconnect);
 
-            btnResetLogin = MBtn("CANCELLA CREDENZIALI", new Point(btnDisconnect.Right + 6, top + 6), 160);
+            btnResetLogin = MBtn("CANCELLA CREDENZIALI", 160);
+            btnResetLogin.Location = new Point(btnDisconnect.Right + 6, 6);
             btnResetLogin.Click += (s, e) => { _connection.ResetLogin(); Log("Cache login cancellata."); };
-            Controls.Add(btnResetLogin);
+            connPanel.Controls.Add(btnResetLogin);
 
             progressBar = new ProgressBar
             {
-                Location = new Point(btnResetLogin.Right + 12, top + 18),
+                Location = new Point(btnResetLogin.Right + 12, 18),
                 Size = new Size(120, 5),
                 Style = ProgressBarStyle.Marquee,
                 Visible = false
             };
-            Controls.Add(progressBar);
+            connPanel.Controls.Add(progressBar);
 
             lblStatus = new Label
             {
                 Text = "Disconnesso",
-                Location = new Point(progressBar.Right + 12, top + 10),
-                Size = new Size(ClientSize.Width - progressBar.Right - 20, 24),
+                Location = new Point(progressBar.Right + 12, 12),
+                Size = new Size(400, 24),
                 ForeColor = Color.Gray,
                 BackColor = Color.Transparent,
                 Font = new Font("Segoe UI", 9f),
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            Controls.Add(lblStatus);
+            connPanel.Controls.Add(lblStatus);
 
-            top += 48;
-
-            // ── Tab control ──
-            int logAreaHeight = 190;
+            // ── Center: Tabs ──
             tabControl = new TabControl
             {
-                Location = new Point(6, top),
-                Size = new Size(ClientSize.Width - 12, ClientSize.Height - top - logAreaHeight),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
-                Font = new Font("Segoe UI", 9f)
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 9f),
+                Padding = new Point(12, 4),
+                DrawMode = TabDrawMode.OwnerDrawFixed
             };
-            tabControl.DrawMode = TabDrawMode.OwnerDrawFixed;
             tabControl.DrawItem += TabControl_DrawItem;
             tabControl.TabPages.Add(CreateTabChangeBU());
             tabControl.TabPages.Add(CreateTabClone());
             tabControl.TabPages.Add(CreateTabReassign());
             tabControl.TabPages.Add(CreateTabSecurityRoles());
             tabControl.TabPages.Add(CreateTabTeams());
+            tabControl.TabPages.Add(CreateTabRoleFinder());
             tabControl.Enabled = false;
-            tabControl.Resize += (s, e) => OnTabControlResized();
-            Controls.Add(tabControl);
 
-            // ── Log ──
-            var btnClear = MBtn("PULISCI LOG", new Point(6, 0), 130);
-            btnClear.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
-            btnClear.Click += (s, e) => rtbLog.Clear();
-            Controls.Add(btnClear);
+            // Dock order: last added = processed first by layout engine
+            Controls.Add(tabControl);  // Fill (innermost)
+            Controls.Add(logPanel);    // Bottom
+            Controls.Add(connPanel);   // Top (outermost)
 
-            lblCredits = new LinkLabel
-            {
-                Text = "Creato da Antonio Colamartino",
-                Size = new Size(210, 20),
-                Font = new Font("Segoe UI", 8.5f),
-                LinkColor = AppTheme.Link,
-                VisitedLinkColor = AppTheme.Link,
-                ActiveLinkColor = AppTheme.LinkActive,
-                BackColor = Color.Transparent,
-                TextAlign = ContentAlignment.MiddleRight,
-                Anchor = AnchorStyles.Right | AnchorStyles.Bottom
-            };
-            lblCredits.LinkClicked += (s, e) => Process.Start("https://antoniocolamartino.it");
-            Controls.Add(lblCredits);
-
-            rtbLog = new RichTextBox
-            {
-                Size = new Size(ClientSize.Width - 12, 150),
-                ReadOnly = true,
-                BackColor = AppTheme.LogBg,
-                ForeColor = AppTheme.LogFg,
-                Font = new Font("Consolas", 9f),
-                BorderStyle = BorderStyle.None,
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
-            };
-            Controls.Add(rtbLog);
-
-            PositionBottomControls(btnClear, lblCredits);
-            Resize += (s, e) => PositionBottomControls(btnClear, lblCredits);
+            ResumeLayout(true);
         }
 
         private void TabControl_DrawItem(object sender, DrawItemEventArgs e)
@@ -204,127 +213,76 @@ namespace Dynamics365UserManager
             }
         }
 
-        private void PositionBottomControls(Control btnClear, Control lblCredits)
-        {
-            int logTop = ClientSize.Height - 150 - 8;
-            int barTop = logTop - 38;
-            btnClear.Location = new Point(6, barTop);
-            lblCredits.Location = new Point(ClientSize.Width - 220, barTop + 6);
-            rtbLog.Location = new Point(6, logTop);
-            rtbLog.Size = new Size(ClientSize.Width - 12, ClientSize.Height - logTop - 8);
-        }
-
-        private void OnTabControlResized()
-        {
-            int tw = tabControl.ClientSize.Width;
-            int th = tabControl.ClientSize.Height;
-
-            if (lvUsers != null)
-            {
-                int half = (tw - 36) / 2;
-                lvUsers.Size = new Size(half, th - lvUsers.Top - 60);
-                _lblRolesHeader.Location = new Point(half + 24, _lblRolesHeader.Location.Y);
-                lvRoles.Location = new Point(half + 24, lvRoles.Location.Y);
-                lvRoles.Size = new Size(tw - half - 36, th - lvRoles.Top - 60);
-                cbBusinessUnits.Location = new Point(cbBusinessUnits.Location.X, th - 50);
-                btnChangeBU.Location = new Point(half + 24, th - 44);
-            }
-
-            if (lvRolesList != null)
-            {
-                int leftW = (tw - 36) / 3;
-                int rightW = tw - leftW - 36;
-                int topListsTop = lvRolesList.Top;
-                int listH = (th - topListsTop - 130) / 2;
-                if (listH < 60) listH = 60;
-                lvRolesList.Size = new Size(leftW, listH);
-                lvRoleUsers.Location = new Point(leftW + 24, topListsTop);
-                lvRoleUsers.Size = new Size(rightW, listH);
-                int y4 = topListsTop + listH + 8;
-                btnRemoveRole.Location = new Point(leftW + 24, y4);
-                y4 += 6;
-                lblRoleAssignHeader.Location = new Point(12, y4);
-                y4 += 24;
-                txtRoleUserSearch.Location = new Point(12, y4);
-                btnRoleUserSearch.Location = new Point(362, y4 + 2);
-                btnAssignRole.Location = new Point(460, y4 + 2);
-                y4 += 40;
-                lvRoleUserResults.Location = new Point(12, y4);
-                lvRoleUserResults.Size = new Size(tw - 24, th - y4 - 8);
-            }
-
-            if (lvTeamsList != null)
-            {
-                int leftW = (tw - 36) / 3;
-                int rightW = tw - leftW - 36;
-                int topListsTop = lvTeamsList.Top;
-                int listH = (th - topListsTop - 130) / 2;
-                if (listH < 60) listH = 60;
-                lvTeamsList.Size = new Size(leftW, listH);
-                lvTeamMembers.Location = new Point(leftW + 24, topListsTop);
-                lvTeamMembers.Size = new Size(rightW, listH);
-                int y5 = topListsTop + listH + 8;
-                btnRemoveFromTeam.Location = new Point(leftW + 24, y5);
-                y5 += 6;
-                lblTeamAddHeader.Location = new Point(12, y5);
-                y5 += 24;
-                txtTeamUserSearch.Location = new Point(12, y5);
-                btnTeamUserSearch.Location = new Point(362, y5 + 2);
-                btnAddToTeam.Location = new Point(460, y5 + 2);
-                y5 += 40;
-                lvTeamUserResults.Location = new Point(12, y5);
-                lvTeamUserResults.Size = new Size(tw - 24, th - y5 - 8);
-            }
-        }
-
         // ─────────── Tab 1 – Cambio BU ───────────
 
         private TabPage CreateTabChangeBU()
         {
-            var t = new TabPage("Cambio BU") { BackColor = AppTheme.ControlBg };
-            int y = 12;
+            var t = new TabPage("Cambio BU") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
 
-            txtBUSearch = MTxt("Cerca utente per nome o email...", new Point(12, y), 340);
-            t.Controls.Add(txtBUSearch);
-
-            btnBUSearch = MBtn("CERCA UTENTE", new Point(362, y + 2), 110);
+            // Search bar (top)
+            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 44 };
+            txtBUSearch = MTxt("Cerca utente per nome o email...", 340);
+            txtBUSearch.Location = new Point(6, 6);
+            searchPanel.Controls.Add(txtBUSearch);
+            btnBUSearch = MBtn("CERCA UTENTE", 110);
+            btnBUSearch.Location = new Point(356, 4);
             btnBUSearch.Click += async (s, e) => await SearchUsersForBUAsync();
-            t.Controls.Add(btnBUSearch);
+            searchPanel.Controls.Add(btnBUSearch);
             txtBUSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { btnBUSearch.PerformClick(); e.SuppressKeyPress = true; } };
 
-            y += 40;
-            t.Controls.Add(MLbl("Utenti trovati:", new Point(12, y), true));
-            _lblRolesHeader = MLbl("Ruoli correnti:", new Point(510, y), true);
-            t.Controls.Add(_lblRolesHeader);
-
-            y += 24;
-            lvUsers = MLv(new Point(12, y), new Size(485, 180));
-            lvUsers.Columns.Add("Nome", 175);
-            lvUsers.Columns.Add("Email", 170);
-            lvUsers.Columns.Add("Business Unit", 130);
-            lvUsers.SelectedIndexChanged += async (s, e) => await OnUserSelectedAsync();
-            t.Controls.Add(lvUsers);
-
-            lvRoles = MLv(new Point(510, y), new Size(480, 180));
-            lvRoles.Columns.Add("Nome Ruolo", 460);
-            t.Controls.Add(lvRoles);
-
-            y += 190;
-            t.Controls.Add(MLbl("Nuova Business Unit:", new Point(12, y + 6)));
-
+            // Action bar (bottom)
+            var actionPanel = new Panel { Dock = DockStyle.Bottom, Height = 52 };
+            var lblBU = MLbl("Nuova Business Unit:", true);
+            lblBU.Location = new Point(6, 14);
+            actionPanel.Controls.Add(lblBU);
             cbBusinessUnits = new ComboBox
             {
-                Location = new Point(180, y + 2), Size = new Size(320, 28),
+                Location = new Point(180, 10), Size = new Size(320, 28),
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 BackColor = AppTheme.InputBg, ForeColor = AppTheme.FgPrimary,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9f)
             };
-            t.Controls.Add(cbBusinessUnits);
-
-            btnChangeBU = MBtn("ASSEGNA BU", new Point(520, y + 2), 130, true);
+            actionPanel.Controls.Add(cbBusinessUnits);
+            btnChangeBU = MBtn("ASSEGNA BU", 130, true);
+            btnChangeBU.Location = new Point(510, 8);
+            btnChangeBU.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnChangeBU.Click += async (s, e) => await ChangeBUAsync();
-            t.Controls.Add(btnChangeBU);
+            actionPanel.Controls.Add(btnChangeBU);
 
+            // Users | Roles split (fill)
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 8
+            };
+
+            var lblUsersHdr = MLbl("Utenti trovati:", true);
+            lblUsersHdr.Dock = DockStyle.Top;
+            lblUsersHdr.AutoSize = false;
+            lblUsersHdr.Height = 24;
+            lvUsers = MLv();
+            lvUsers.Dock = DockStyle.Fill;
+            lvUsers.Columns.Add("Nome", 175);
+            lvUsers.Columns.Add("Email", 170);
+            lvUsers.Columns.Add("Business Unit", 130);
+            lvUsers.SelectedIndexChanged += async (s, e) => await OnUserSelectedAsync();
+            split.Panel1.Controls.Add(lvUsers);
+            split.Panel1.Controls.Add(lblUsersHdr);
+
+            var lblRolesHdr = MLbl("Ruoli correnti:", true);
+            lblRolesHdr.Dock = DockStyle.Top;
+            lblRolesHdr.AutoSize = false;
+            lblRolesHdr.Height = 24;
+            lvRoles = MLv();
+            lvRoles.Dock = DockStyle.Fill;
+            lvRoles.Columns.Add("Nome Ruolo", 460);
+            split.Panel2.Controls.Add(lvRoles);
+            split.Panel2.Controls.Add(lblRolesHdr);
+
+            t.Controls.Add(split);
+            t.Controls.Add(actionPanel);
+            t.Controls.Add(searchPanel);
             return t;
         }
 
@@ -379,57 +337,92 @@ namespace Dynamics365UserManager
 
         private TabPage CreateTabClone()
         {
-            var t = new TabPage("Clone User") { BackColor = AppTheme.ControlBg };
-            int y = 12;
+            var t = new TabPage("Clone User") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
 
-            txtCloneSource = MTxt("Email sorgente", new Point(12, y), 310);
-            t.Controls.Add(txtCloneSource);
-            btnCloneSearchSource = MBtn("CERCA SORGENTE", new Point(332, y + 2), 130);
+            // Search area (top)
+            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 90 };
+            txtCloneSource = MTxt("Email sorgente", 310);
+            txtCloneSource.Location = new Point(6, 6);
+            searchPanel.Controls.Add(txtCloneSource);
+            btnCloneSearchSource = MBtn("CERCA SORGENTE", 130);
+            btnCloneSearchSource.Location = new Point(326, 4);
             btnCloneSearchSource.Click += async (s, e) => { _cloneSource = await FindUserAsync(txtCloneSource.Text); SetInfo(lblSourceInfo, _cloneSource); };
-            t.Controls.Add(btnCloneSearchSource);
-            lblSourceInfo = MLbl("", new Point(470, y + 6));
-            lblSourceInfo.Size = new Size(510, 24);
-            t.Controls.Add(lblSourceInfo);
+            searchPanel.Controls.Add(btnCloneSearchSource);
+            lblSourceInfo = MLbl("");
+            lblSourceInfo.Location = new Point(470, 10);
+            lblSourceInfo.AutoSize = false;
+            lblSourceInfo.Size = new Size(500, 24);
+            lblSourceInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            searchPanel.Controls.Add(lblSourceInfo);
 
-            y += 40;
-            txtCloneTarget = MTxt("Email target", new Point(12, y), 310);
-            t.Controls.Add(txtCloneTarget);
-            btnCloneSearchTarget = MBtn("CERCA DESTINAZIONE", new Point(332, y + 2), 150);
+            txtCloneTarget = MTxt("Email target", 310);
+            txtCloneTarget.Location = new Point(6, 48);
+            searchPanel.Controls.Add(txtCloneTarget);
+            btnCloneSearchTarget = MBtn("CERCA DESTINAZIONE", 150);
+            btnCloneSearchTarget.Location = new Point(326, 46);
             btnCloneSearchTarget.Click += async (s, e) => { _cloneTarget = await FindUserAsync(txtCloneTarget.Text); SetInfo(lblTargetInfo, _cloneTarget); };
-            t.Controls.Add(btnCloneSearchTarget);
-            lblTargetInfo = MLbl("", new Point(490, y + 6));
-            lblTargetInfo.Size = new Size(560, 24);
-            t.Controls.Add(lblTargetInfo);
+            searchPanel.Controls.Add(btnCloneSearchTarget);
+            lblTargetInfo = MLbl("");
+            lblTargetInfo.Location = new Point(490, 52);
+            lblTargetInfo.AutoSize = false;
+            lblTargetInfo.Size = new Size(480, 24);
+            lblTargetInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            searchPanel.Controls.Add(lblTargetInfo);
 
-            y += 48;
-            t.Controls.Add(MLbl("Opzioni:", new Point(12, y), true));
-            y += 24;
-            chkCloneBU = MCk("Business Unit", 8, y, true);
-            chkCloneRoles = MCk("Security Roles", 8, y + 28, true);
-            chkCloneTeams = MCk("Teams", 8, y + 56);
+            // Clone button (bottom)
+            var btnPanel = new Panel { Dock = DockStyle.Bottom, Height = 48 };
+            btnClone = MBtn("AVVIA CLONAZIONE", 180, true);
+            btnClone.Location = new Point(6, 6);
+            btnClone.Click += async (s, e) => await CloneUserAsync();
+            btnPanel.Controls.Add(btnClone);
+
+            // Options + Teams (fill)
+            var middlePanel = new Panel { Dock = DockStyle.Fill };
+
+            var optPanel = new Panel { Dock = DockStyle.Left, Width = 240 };
+            var lblOpt = MLbl("Opzioni:", true);
+            lblOpt.Location = new Point(6, 8);
+            optPanel.Controls.Add(lblOpt);
+            chkCloneBU = MCk("Business Unit", true); chkCloneBU.Location = new Point(8, 34);
+            chkCloneRoles = MCk("Security Roles", true); chkCloneRoles.Location = new Point(8, 62);
+            chkCloneTeams = MCk("Teams"); chkCloneTeams.Location = new Point(8, 90);
             chkCloneTeams.CheckedChanged += async (s, e) => { if (chkCloneTeams.Checked && _cloneSource != null) await LoadTeamsAsync(); };
-            t.Controls.AddRange(new Control[] { chkCloneBU, chkCloneRoles, chkCloneTeams });
+            optPanel.Controls.AddRange(new Control[] { chkCloneBU, chkCloneRoles, chkCloneTeams });
 
-            t.Controls.Add(MLbl("Teams sorgente:", new Point(250, y - 24), true));
+            var teamsPanel = new Panel { Dock = DockStyle.Fill };
+            var teamsToolbar = new Panel { Dock = DockStyle.Top, Height = 28 };
+            var lblTeamsHdr = MLbl("Teams sorgente:", true);
+            lblTeamsHdr.Location = new Point(0, 4);
+            teamsToolbar.Controls.Add(lblTeamsHdr);
+
+            var teamsBtnPanel = new Panel { Dock = DockStyle.Right, Width = 160 };
+            btnSelectAll = MBtn("SELEZIONA TUTTI", 140);
+            btnSelectAll.Location = new Point(10, 8);
+            btnSelectAll.Click += (s, e) => { for (int i = 0; i < clbTeams.Items.Count; i++) clbTeams.SetItemChecked(i, true); };
+            teamsBtnPanel.Controls.Add(btnSelectAll);
+            btnDeselectAll = MBtn("DESELEZIONA TUTTI", 140);
+            btnDeselectAll.Location = new Point(10, 48);
+            btnDeselectAll.Click += (s, e) => { for (int i = 0; i < clbTeams.Items.Count; i++) clbTeams.SetItemChecked(i, false); };
+            teamsBtnPanel.Controls.Add(btnDeselectAll);
+
             clbTeams = new CheckedListBox
             {
-                Location = new Point(250, y), Size = new Size(380, 108),
+                Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 9f),
-                BackColor = AppTheme.CheckListBg, ForeColor = AppTheme.CheckListFg
+                BackColor = AppTheme.CheckListBg,
+                ForeColor = AppTheme.CheckListFg
             };
-            t.Controls.Add(clbTeams);
 
-            btnSelectAll = MBtn("SELEZIONA TUTTI", new Point(645, y), 130);
-            btnSelectAll.Click += (s, e) => { for (int i = 0; i < clbTeams.Items.Count; i++) clbTeams.SetItemChecked(i, true); };
-            t.Controls.Add(btnSelectAll);
-            btnDeselectAll = MBtn("DESELEZIONA TUTTI", new Point(645, y + 38), 130);
-            btnDeselectAll.Click += (s, e) => { for (int i = 0; i < clbTeams.Items.Count; i++) clbTeams.SetItemChecked(i, false); };
-            t.Controls.Add(btnDeselectAll);
+            teamsPanel.Controls.Add(clbTeams);
+            teamsPanel.Controls.Add(teamsBtnPanel);
+            teamsPanel.Controls.Add(teamsToolbar);
 
-            btnClone = MBtn("AVVIA CLONAZIONE", new Point(12, y + 118), 180, true);
-            btnClone.Click += async (s, e) => await CloneUserAsync();
-            t.Controls.Add(btnClone);
+            middlePanel.Controls.Add(teamsPanel);
+            middlePanel.Controls.Add(optPanel);
 
+            t.Controls.Add(middlePanel);
+            t.Controls.Add(btnPanel);
+            t.Controls.Add(searchPanel);
             return t;
         }
 
@@ -460,50 +453,81 @@ namespace Dynamics365UserManager
 
         private TabPage CreateTabReassign()
         {
-            var t = new TabPage("Reassign") { BackColor = AppTheme.ControlBg };
-            int y = 12;
+            var t = new TabPage("Reassign") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
 
-            txtReassignOld = MTxt("Email vecchio owner", new Point(12, y), 310);
-            t.Controls.Add(txtReassignOld);
-            btnReassignSearchOld = MBtn("CERCA VECCHIO", new Point(332, y + 2), 120);
+            // Search area (top)
+            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 90 };
+            txtReassignOld = MTxt("Email vecchio owner", 310);
+            txtReassignOld.Location = new Point(6, 6);
+            searchPanel.Controls.Add(txtReassignOld);
+            btnReassignSearchOld = MBtn("CERCA VECCHIO", 120);
+            btnReassignSearchOld.Location = new Point(326, 4);
             btnReassignSearchOld.Click += async (s, e) => { _reassignOld = await FindUserAsync(txtReassignOld.Text); SetInfo(lblOldOwner, _reassignOld); };
-            t.Controls.Add(btnReassignSearchOld);
-            lblOldOwner = MLbl("", new Point(460, y + 6));
-            lblOldOwner.Size = new Size(560, 24);
-            t.Controls.Add(lblOldOwner);
+            searchPanel.Controls.Add(btnReassignSearchOld);
+            lblOldOwner = MLbl("");
+            lblOldOwner.Location = new Point(460, 10);
+            lblOldOwner.AutoSize = false;
+            lblOldOwner.Size = new Size(500, 24);
+            lblOldOwner.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            searchPanel.Controls.Add(lblOldOwner);
 
-            y += 40;
-            txtReassignNew = MTxt("Email nuovo owner", new Point(12, y), 310);
-            t.Controls.Add(txtReassignNew);
-            btnReassignSearchNew = MBtn("CERCA NUOVO", new Point(332, y + 2), 120);
+            txtReassignNew = MTxt("Email nuovo owner", 310);
+            txtReassignNew.Location = new Point(6, 48);
+            searchPanel.Controls.Add(txtReassignNew);
+            btnReassignSearchNew = MBtn("CERCA NUOVO", 120);
+            btnReassignSearchNew.Location = new Point(326, 46);
             btnReassignSearchNew.Click += async (s, e) => { _reassignNew = await FindUserAsync(txtReassignNew.Text); SetInfo(lblNewOwner, _reassignNew); };
-            t.Controls.Add(btnReassignSearchNew);
-            lblNewOwner = MLbl("", new Point(460, y + 6));
-            lblNewOwner.Size = new Size(560, 24);
-            t.Controls.Add(lblNewOwner);
+            searchPanel.Controls.Add(btnReassignSearchNew);
+            lblNewOwner = MLbl("");
+            lblNewOwner.Location = new Point(460, 52);
+            lblNewOwner.AutoSize = false;
+            lblNewOwner.Size = new Size(500, 24);
+            lblNewOwner.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            searchPanel.Controls.Add(lblNewOwner);
 
-            y += 48;
-            t.Controls.Add(MLbl("Tipi di record:", new Point(12, y), true));
-            y += 24;
-            chkAccount = MCk("Account", 8, y, true);         chkContact = MCk("Contact", 8, y + 28, true);
-            chkOpportunity = MCk("Opportunity", 8, y + 56, true); chkQuote = MCk("Quote", 8, y + 84, true);
-            chkOrder = MCk("Sales Order", 160, y, true);      chkLead = MCk("Lead", 160, y + 28, true);
-            chkCase = MCk("Case", 160, y + 56, true);
-            t.Controls.AddRange(new Control[] { chkAccount, chkContact, chkOpportunity, chkQuote, chkOrder, chkLead, chkCase });
-
-            t.Controls.Add(MLbl("Anteprima:", new Point(360, y - 24), true));
-            lblCounts = MLbl("", new Point(360, y));
-            lblCounts.Size = new Size(320, 128);
-            t.Controls.Add(lblCounts);
-
-            btnCountRecords = MBtn("ANTEPRIMA CONTEGGIO", new Point(12, y + 118), 180);
+            // Button bar (bottom)
+            var btnPanel = new Panel { Dock = DockStyle.Bottom, Height = 48 };
+            btnCountRecords = MBtn("ANTEPRIMA CONTEGGIO", 180);
+            btnCountRecords.Location = new Point(6, 6);
             btnCountRecords.Click += async (s, e) => await CountRecordsAsync();
-            t.Controls.Add(btnCountRecords);
-
-            btnReassign = MBtn("TRASFERISCI RECORD", new Point(btnCountRecords.Right + 8, y + 118), 170, true);
+            btnPanel.Controls.Add(btnCountRecords);
+            btnReassign = MBtn("TRASFERISCI RECORD", 170, true);
+            btnReassign.Location = new Point(btnCountRecords.Right + 8, 6);
             btnReassign.Click += async (s, e) => await ReassignRecordsAsync();
-            t.Controls.Add(btnReassign);
+            btnPanel.Controls.Add(btnReassign);
 
+            // Checkboxes + Preview (fill)
+            var middlePanel = new Panel { Dock = DockStyle.Fill };
+
+            var checkPanel = new Panel { Dock = DockStyle.Left, Width = 340 };
+            var lblTypes = MLbl("Tipi di record:", true);
+            lblTypes.Location = new Point(6, 8);
+            checkPanel.Controls.Add(lblTypes);
+            chkAccount = MCk("Account", true); chkAccount.Location = new Point(8, 34);
+            chkContact = MCk("Contact", true); chkContact.Location = new Point(8, 62);
+            chkOpportunity = MCk("Opportunity", true); chkOpportunity.Location = new Point(8, 90);
+            chkQuote = MCk("Quote", true); chkQuote.Location = new Point(8, 118);
+            chkOrder = MCk("Sales Order", true); chkOrder.Location = new Point(160, 34);
+            chkLead = MCk("Lead", true); chkLead.Location = new Point(160, 62);
+            chkCase = MCk("Case", true); chkCase.Location = new Point(160, 90);
+            checkPanel.Controls.AddRange(new Control[] { chkAccount, chkContact, chkOpportunity, chkQuote, chkOrder, chkLead, chkCase });
+
+            var previewPanel = new Panel { Dock = DockStyle.Fill };
+            var lblPreview = MLbl("Anteprima:", true);
+            lblPreview.Location = new Point(6, 8);
+            previewPanel.Controls.Add(lblPreview);
+            lblCounts = MLbl("");
+            lblCounts.Location = new Point(6, 34);
+            lblCounts.AutoSize = false;
+            lblCounts.Size = new Size(320, 128);
+            previewPanel.Controls.Add(lblCounts);
+
+            middlePanel.Controls.Add(previewPanel);
+            middlePanel.Controls.Add(checkPanel);
+
+            t.Controls.Add(middlePanel);
+            t.Controls.Add(btnPanel);
+            t.Controls.Add(searchPanel);
             return t;
         }
 
@@ -539,63 +563,98 @@ namespace Dynamics365UserManager
 
         private TabPage CreateTabSecurityRoles()
         {
-            var t = new TabPage("Security Roles") { BackColor = AppTheme.ControlBg };
-            int y = 12;
+            var t = new TabPage("Security Roles") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
 
-            txtRoleSearch = MTxt("Cerca ruolo per nome...", new Point(12, y), 340);
-            t.Controls.Add(txtRoleSearch);
-            btnRoleSearch = MBtn("CERCA RUOLO", new Point(362, y + 2), 110);
+            // Search bar (top)
+            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 44 };
+            txtRoleSearch = MTxt("Cerca ruolo per nome...", 340);
+            txtRoleSearch.Location = new Point(6, 6);
+            searchPanel.Controls.Add(txtRoleSearch);
+            btnRoleSearch = MBtn("CERCA RUOLO", 110);
+            btnRoleSearch.Location = new Point(356, 4);
             btnRoleSearch.Click += async (s, e) => await SearchRolesAsync();
-            t.Controls.Add(btnRoleSearch);
+            searchPanel.Controls.Add(btnRoleSearch);
             txtRoleSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { btnRoleSearch.PerformClick(); e.SuppressKeyPress = true; } };
 
-            y += 40;
-            t.Controls.Add(MLbl("Ruoli trovati:", new Point(12, y), true));
-            t.Controls.Add(MLbl("Utenti con il ruolo selezionato:", new Point(360, y), true));
+            // Main split: top (roles/users) | bottom (assign area)
+            var mainSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterWidth = 8
+            };
 
-            y += 24;
-            lvRolesList = MLv(new Point(12, y), new Size(335, 140));
+            // ── Top: roles list | role users ──
+            var topSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 8
+            };
+
+            var lblRolesHdr = MLbl("Ruoli trovati:", true);
+            lblRolesHdr.Dock = DockStyle.Top;
+            lblRolesHdr.AutoSize = false;
+            lblRolesHdr.Height = 24;
+            lvRolesList = MLv();
+            lvRolesList.Dock = DockStyle.Fill;
             lvRolesList.Columns.Add("Nome", 230);
             lvRolesList.Columns.Add("BU", 95);
             lvRolesList.SelectedIndexChanged += async (s, e) => await OnRoleSelectedAsync();
-            t.Controls.Add(lvRolesList);
+            topSplit.Panel1.Controls.Add(lvRolesList);
+            topSplit.Panel1.Controls.Add(lblRolesHdr);
 
-            lvRoleUsers = MLv(new Point(360, y), new Size(630, 140));
+            var lblRoleUsersHdr = MLbl("Utenti con il ruolo selezionato:", true);
+            lblRoleUsersHdr.Dock = DockStyle.Top;
+            lblRoleUsersHdr.AutoSize = false;
+            lblRoleUsersHdr.Height = 24;
+            var removeBtnPanel = new Panel { Dock = DockStyle.Bottom, Height = 42 };
+            btnRemoveRole = MBtn("RIMUOVI RUOLO", 140);
+            btnRemoveRole.Location = new Point(0, 4);
+            btnRemoveRole.Click += async (s, e) => await RemoveRoleFromSelectedAsync();
+            removeBtnPanel.Controls.Add(btnRemoveRole);
+            lvRoleUsers = MLv();
+            lvRoleUsers.Dock = DockStyle.Fill;
             lvRoleUsers.MultiSelect = true;
             lvRoleUsers.Columns.Add("Nome", 200);
             lvRoleUsers.Columns.Add("Email", 220);
             lvRoleUsers.Columns.Add("Business Unit", 190);
-            t.Controls.Add(lvRoleUsers);
+            topSplit.Panel2.Controls.Add(lvRoleUsers);
+            topSplit.Panel2.Controls.Add(removeBtnPanel);
+            topSplit.Panel2.Controls.Add(lblRoleUsersHdr);
 
-            y += 148;
-            btnRemoveRole = MBtn("RIMUOVI RUOLO", new Point(360, y), 140);
-            btnRemoveRole.Click += async (s, e) => await RemoveRoleFromSelectedAsync();
-            t.Controls.Add(btnRemoveRole);
+            mainSplit.Panel1.Controls.Add(topSplit);
 
-            y += 6;
-            lblRoleAssignHeader = MLbl("Assegna ruolo a utenti:", new Point(12, y), true);
-            t.Controls.Add(lblRoleAssignHeader);
-
-            y += 24;
-            txtRoleUserSearch = MTxt("Cerca utente per nome o email...", new Point(12, y), 340);
-            t.Controls.Add(txtRoleUserSearch);
-            btnRoleUserSearch = MBtn("CERCA UTENTE", new Point(362, y + 2), 110);
+            // ── Bottom: assign section ──
+            var assignHeader = new Panel { Dock = DockStyle.Top, Height = 72 };
+            var lblAssign = MLbl("Assegna ruolo a utenti:", true);
+            lblAssign.Location = new Point(6, 8);
+            assignHeader.Controls.Add(lblAssign);
+            txtRoleUserSearch = MTxt("Cerca utente per nome o email...", 340);
+            txtRoleUserSearch.Location = new Point(6, 36);
+            assignHeader.Controls.Add(txtRoleUserSearch);
+            btnRoleUserSearch = MBtn("CERCA UTENTE", 110);
+            btnRoleUserSearch.Location = new Point(356, 34);
             btnRoleUserSearch.Click += async (s, e) => await SearchUsersForRoleAsync();
-            t.Controls.Add(btnRoleUserSearch);
+            assignHeader.Controls.Add(btnRoleUserSearch);
             txtRoleUserSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { btnRoleUserSearch.PerformClick(); e.SuppressKeyPress = true; } };
-
-            btnAssignRole = MBtn("ASSEGNA RUOLO", new Point(btnRoleUserSearch.Right + 8, y + 2), 140, true);
+            btnAssignRole = MBtn("ASSEGNA RUOLO", 140, true);
+            btnAssignRole.Location = new Point(btnRoleUserSearch.Right + 8, 34);
             btnAssignRole.Click += async (s, e) => await AssignRoleToSelectedAsync();
-            t.Controls.Add(btnAssignRole);
+            assignHeader.Controls.Add(btnAssignRole);
 
-            y += 40;
-            lvRoleUserResults = MLv(new Point(12, y), new Size(978, 80));
+            lvRoleUserResults = MLv();
+            lvRoleUserResults.Dock = DockStyle.Fill;
             lvRoleUserResults.MultiSelect = true;
             lvRoleUserResults.Columns.Add("Nome", 250);
             lvRoleUserResults.Columns.Add("Email", 350);
             lvRoleUserResults.Columns.Add("Business Unit", 350);
-            t.Controls.Add(lvRoleUserResults);
 
+            mainSplit.Panel2.Controls.Add(lvRoleUserResults);
+            mainSplit.Panel2.Controls.Add(assignHeader);
+
+            t.Controls.Add(mainSplit);
+            t.Controls.Add(searchPanel);
             return t;
         }
 
@@ -700,63 +759,98 @@ namespace Dynamics365UserManager
 
         private TabPage CreateTabTeams()
         {
-            var t = new TabPage("Teams") { BackColor = AppTheme.ControlBg };
-            int y = 12;
+            var t = new TabPage("Teams") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
 
-            txtTeamSearch = MTxt("Cerca team per nome...", new Point(12, y), 340);
-            t.Controls.Add(txtTeamSearch);
-            btnTeamSearch = MBtn("CERCA TEAM", new Point(362, y + 2), 110);
+            // Search bar (top)
+            var searchPanel = new Panel { Dock = DockStyle.Top, Height = 44 };
+            txtTeamSearch = MTxt("Cerca team per nome...", 340);
+            txtTeamSearch.Location = new Point(6, 6);
+            searchPanel.Controls.Add(txtTeamSearch);
+            btnTeamSearch = MBtn("CERCA TEAM", 110);
+            btnTeamSearch.Location = new Point(356, 4);
             btnTeamSearch.Click += async (s, e) => await SearchTeamsAsync();
-            t.Controls.Add(btnTeamSearch);
+            searchPanel.Controls.Add(btnTeamSearch);
             txtTeamSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { btnTeamSearch.PerformClick(); e.SuppressKeyPress = true; } };
 
-            y += 40;
-            t.Controls.Add(MLbl("Teams trovati:", new Point(12, y), true));
-            t.Controls.Add(MLbl("Membri del team selezionato:", new Point(360, y), true));
+            // Main split: top (teams/members) | bottom (add area)
+            var mainSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterWidth = 8
+            };
 
-            y += 24;
-            lvTeamsList = MLv(new Point(12, y), new Size(335, 140));
+            // ── Top: teams list | team members ──
+            var topSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 8
+            };
+
+            var lblTeamsHdr = MLbl("Teams trovati:", true);
+            lblTeamsHdr.Dock = DockStyle.Top;
+            lblTeamsHdr.AutoSize = false;
+            lblTeamsHdr.Height = 24;
+            lvTeamsList = MLv();
+            lvTeamsList.Dock = DockStyle.Fill;
             lvTeamsList.Columns.Add("Nome", 195);
             lvTeamsList.Columns.Add("BU", 130);
             lvTeamsList.SelectedIndexChanged += async (s, e) => await OnTeamSelectedAsync();
-            t.Controls.Add(lvTeamsList);
+            topSplit.Panel1.Controls.Add(lvTeamsList);
+            topSplit.Panel1.Controls.Add(lblTeamsHdr);
 
-            lvTeamMembers = MLv(new Point(360, y), new Size(630, 140));
+            var lblMembersHdr = MLbl("Membri del team selezionato:", true);
+            lblMembersHdr.Dock = DockStyle.Top;
+            lblMembersHdr.AutoSize = false;
+            lblMembersHdr.Height = 24;
+            var removeBtnPanel = new Panel { Dock = DockStyle.Bottom, Height = 42 };
+            btnRemoveFromTeam = MBtn("RIMUOVI DAL TEAM", 160);
+            btnRemoveFromTeam.Location = new Point(0, 4);
+            btnRemoveFromTeam.Click += async (s, e) => await RemoveUsersFromTeamAsync();
+            removeBtnPanel.Controls.Add(btnRemoveFromTeam);
+            lvTeamMembers = MLv();
+            lvTeamMembers.Dock = DockStyle.Fill;
             lvTeamMembers.MultiSelect = true;
             lvTeamMembers.Columns.Add("Nome", 200);
             lvTeamMembers.Columns.Add("Email", 220);
             lvTeamMembers.Columns.Add("Business Unit", 190);
-            t.Controls.Add(lvTeamMembers);
+            topSplit.Panel2.Controls.Add(lvTeamMembers);
+            topSplit.Panel2.Controls.Add(removeBtnPanel);
+            topSplit.Panel2.Controls.Add(lblMembersHdr);
 
-            y += 148;
-            btnRemoveFromTeam = MBtn("RIMUOVI DAL TEAM", new Point(360, y), 160);
-            btnRemoveFromTeam.Click += async (s, e) => await RemoveUsersFromTeamAsync();
-            t.Controls.Add(btnRemoveFromTeam);
+            mainSplit.Panel1.Controls.Add(topSplit);
 
-            y += 6;
-            lblTeamAddHeader = MLbl("Aggiungi utenti al team:", new Point(12, y), true);
-            t.Controls.Add(lblTeamAddHeader);
-
-            y += 24;
-            txtTeamUserSearch = MTxt("Cerca utente per nome o email...", new Point(12, y), 340);
-            t.Controls.Add(txtTeamUserSearch);
-            btnTeamUserSearch = MBtn("CERCA UTENTE", new Point(362, y + 2), 110);
+            // ── Bottom: add users section ──
+            var addHeader = new Panel { Dock = DockStyle.Top, Height = 72 };
+            var lblAdd = MLbl("Aggiungi utenti al team:", true);
+            lblAdd.Location = new Point(6, 8);
+            addHeader.Controls.Add(lblAdd);
+            txtTeamUserSearch = MTxt("Cerca utente per nome o email...", 340);
+            txtTeamUserSearch.Location = new Point(6, 36);
+            addHeader.Controls.Add(txtTeamUserSearch);
+            btnTeamUserSearch = MBtn("CERCA UTENTE", 110);
+            btnTeamUserSearch.Location = new Point(356, 34);
             btnTeamUserSearch.Click += async (s, e) => await SearchUsersForTeamAsync();
-            t.Controls.Add(btnTeamUserSearch);
+            addHeader.Controls.Add(btnTeamUserSearch);
             txtTeamUserSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { btnTeamUserSearch.PerformClick(); e.SuppressKeyPress = true; } };
-
-            btnAddToTeam = MBtn("AGGIUNGI AL TEAM", new Point(btnTeamUserSearch.Right + 8, y + 2), 160, true);
+            btnAddToTeam = MBtn("AGGIUNGI AL TEAM", 160, true);
+            btnAddToTeam.Location = new Point(btnTeamUserSearch.Right + 8, 34);
             btnAddToTeam.Click += async (s, e) => await AddUsersToTeamAsync();
-            t.Controls.Add(btnAddToTeam);
+            addHeader.Controls.Add(btnAddToTeam);
 
-            y += 40;
-            lvTeamUserResults = MLv(new Point(12, y), new Size(978, 80));
+            lvTeamUserResults = MLv();
+            lvTeamUserResults.Dock = DockStyle.Fill;
             lvTeamUserResults.MultiSelect = true;
             lvTeamUserResults.Columns.Add("Nome", 250);
             lvTeamUserResults.Columns.Add("Email", 350);
             lvTeamUserResults.Columns.Add("Business Unit", 350);
-            t.Controls.Add(lvTeamUserResults);
 
+            mainSplit.Panel2.Controls.Add(lvTeamUserResults);
+            mainSplit.Panel2.Controls.Add(addHeader);
+
+            t.Controls.Add(mainSplit);
+            t.Controls.Add(searchPanel);
             return t;
         }
 
@@ -857,6 +951,231 @@ namespace Dynamics365UserManager
             await OnTeamSelectedAsync();
         }
 
+        // ─────────── Tab 6 – Trova Ruoli ───────────
+
+        private TabPage CreateTabRoleFinder()
+        {
+            var t = new TabPage("Trova Ruoli") { BackColor = AppTheme.ControlBg, Padding = new Padding(6) };
+
+            // ── Top: Input area (labels above combos) ──
+            var inputPanel = new Panel { Dock = DockStyle.Top, Height = 108 };
+
+            // Row 0: Labels
+            var lblEntity = MLbl("Entita':");
+            lblEntity.Location = new Point(8, 4);
+            inputPanel.Controls.Add(lblEntity);
+            var lblPerm = MLbl("Permesso:");
+            lblPerm.Location = new Point(200, 4);
+            inputPanel.Controls.Add(lblPerm);
+            var lblDepth = MLbl("Livello:");
+            lblDepth.Location = new Point(360, 4);
+            inputPanel.Controls.Add(lblDepth);
+
+            // Row 1: ComboBoxes
+            cbRFEntity = new ComboBox
+            {
+                Location = new Point(8, 24), Size = new Size(180, 28),
+                DropDownStyle = ComboBoxStyle.DropDown,
+                Font = new Font("Segoe UI", 9f),
+                BackColor = AppTheme.InputBg, ForeColor = AppTheme.FgPrimary
+            };
+            cbRFEntity.Items.AddRange(new object[] {
+                "account", "contact", "lead", "opportunity", "quote",
+                "salesorder", "invoice", "incident", "task", "phonecall",
+                "email", "appointment", "annotation", "knowledgearticle",
+                "campaign", "list", "queue", "connection", "goal"
+            });
+            inputPanel.Controls.Add(cbRFEntity);
+
+            cbRFPermission = new ComboBox
+            {
+                Location = new Point(200, 24), Size = new Size(148, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 9f),
+                BackColor = AppTheme.InputBg, ForeColor = AppTheme.FgPrimary
+            };
+            cbRFPermission.Items.AddRange(new object[] { "Create", "Read", "Write", "Delete", "Append", "AppendTo", "Assign", "Share" });
+            cbRFPermission.SelectedIndex = 1;
+            inputPanel.Controls.Add(cbRFPermission);
+
+            cbRFDepth = new ComboBox
+            {
+                Location = new Point(360, 24), Size = new Size(160, 28),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 9f),
+                BackColor = AppTheme.InputBg, ForeColor = AppTheme.FgPrimary
+            };
+            cbRFDepth.Items.Add(new DepthItem("User", 1));
+            cbRFDepth.Items.Add(new DepthItem("Business Unit", 2));
+            cbRFDepth.Items.Add(new DepthItem("BU + Child", 4));
+            cbRFDepth.Items.Add(new DepthItem("Organization", 8));
+            cbRFDepth.SelectedIndex = 0;
+            inputPanel.Controls.Add(cbRFDepth);
+
+            // Row 2: Buttons
+            btnRFAdd = MBtn("AGGIUNGI", 110, true);
+            btnRFAdd.Location = new Point(8, 64);
+            btnRFAdd.Click += (s, e) => AddRequirement();
+            inputPanel.Controls.Add(btnRFAdd);
+
+            btnRFRemove = MBtn("RIMUOVI", 110);
+            btnRFRemove.Location = new Point(128, 64);
+            btnRFRemove.Click += (s, e) => RemoveRequirement();
+            inputPanel.Controls.Add(btnRFRemove);
+
+            // ── Requirements list (top portion, fixed height) ──
+            var reqPanel = new Panel { Dock = DockStyle.Top, Height = 180 };
+            var lblReqs = MLbl("Requisiti:", true);
+            lblReqs.Dock = DockStyle.Top;
+            lblReqs.AutoSize = false;
+            lblReqs.Height = 24;
+            lvRFRequirements = MLv();
+            lvRFRequirements.Dock = DockStyle.Fill;
+            lvRFRequirements.Columns.Add("Entita'", 180);
+            lvRFRequirements.Columns.Add("Permesso", 120);
+            lvRFRequirements.Columns.Add("Livello", 150);
+            reqPanel.Controls.Add(lvRFRequirements);
+            reqPanel.Controls.Add(lblReqs);
+
+            // ── Results area (fill) ──
+            var resultPanel = new Panel { Dock = DockStyle.Fill };
+
+            var searchBar = new Panel { Dock = DockStyle.Top, Height = 46 };
+            btnRFSearch = MBtn("CERCA COMBINAZIONI", 190, true);
+            btnRFSearch.Location = new Point(0, 6);
+            btnRFSearch.Click += async (s, e) => await FindCombinationsAsync();
+            searchBar.Controls.Add(btnRFSearch);
+
+            var lblMax = MLbl("Max ruoli:");
+            lblMax.Location = new Point(200, 14);
+            searchBar.Controls.Add(lblMax);
+
+            nudRFMaxRoles = new NumericUpDown
+            {
+                Location = new Point(280, 8), Size = new Size(60, 28),
+                Minimum = 1, Maximum = 8, Value = 3,
+                Font = new Font("Segoe UI", 10f),
+                BackColor = AppTheme.InputBg, ForeColor = AppTheme.FgPrimary
+            };
+            searchBar.Controls.Add(nudRFMaxRoles);
+
+            var lblResults = MLbl("Risultati:", true);
+            lblResults.Dock = DockStyle.Top;
+            lblResults.AutoSize = false;
+            lblResults.Height = 24;
+
+            lvRFResults = MLv();
+            lvRFResults.Dock = DockStyle.Fill;
+            lvRFResults.Columns.Add("# Ruoli", 70);
+            lvRFResults.Columns.Add("Combinazione Ruoli", 800);
+
+            resultPanel.Controls.Add(lvRFResults);
+            resultPanel.Controls.Add(lblResults);
+            resultPanel.Controls.Add(searchBar);
+
+            // Dock order: last added = processed first
+            t.Controls.Add(resultPanel);   // Fill
+            t.Controls.Add(reqPanel);      // Top (below inputPanel)
+            t.Controls.Add(inputPanel);    // Top (topmost)
+            return t;
+        }
+
+        private class DepthItem
+        {
+            public string Name { get; set; }
+            public int Value { get; set; }
+            public DepthItem(string name, int value) { Name = name; Value = value; }
+            public override string ToString() => Name;
+        }
+
+        private void AddRequirement()
+        {
+            var entityText = cbRFEntity.Text?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(entityText))
+            {
+                ShowMsg("Selezionare un'entita'."); return;
+            }
+            if (cbRFPermission.SelectedItem == null)
+            {
+                ShowMsg("Selezionare un permesso."); return;
+            }
+            if (cbRFDepth.SelectedItem == null)
+            {
+                ShowMsg("Selezionare un livello."); return;
+            }
+
+            var permission = cbRFPermission.SelectedItem.ToString();
+            var depthItem = (DepthItem)cbRFDepth.SelectedItem;
+
+            if (_rfRequirements.Any(r => r.EntityLogicalName == entityText
+                && r.AccessRight == permission && r.MinDepthMask == depthItem.Value))
+            {
+                ShowMsg("Requisito gia' presente."); return;
+            }
+
+            var req = new PrivilegeRequirement
+            {
+                EntityLogicalName = entityText,
+                EntityDisplayName = entityText,
+                AccessRight = permission,
+                MinDepthMask = depthItem.Value,
+                DepthDisplayName = depthItem.Name
+            };
+            _rfRequirements.Add(req);
+
+            var item = new ListViewItem(entityText);
+            item.SubItems.Add(permission);
+            item.SubItems.Add(depthItem.Name);
+            item.Tag = req;
+            lvRFRequirements.Items.Add(item);
+            Log($"Requisito aggiunto: {req}");
+        }
+
+        private void RemoveRequirement()
+        {
+            if (lvRFRequirements.SelectedItems.Count == 0)
+            {
+                ShowMsg("Selezionare un requisito da rimuovere."); return;
+            }
+            var item = lvRFRequirements.SelectedItems[0];
+            var req = (PrivilegeRequirement)item.Tag;
+            _rfRequirements.Remove(req);
+            lvRFRequirements.Items.Remove(item);
+            Log($"Requisito rimosso: {req}");
+        }
+
+        private async Task FindCombinationsAsync()
+        {
+            if (_rfRequirements.Count == 0)
+            {
+                ShowMsg("Aggiungere almeno un requisito."); return;
+            }
+
+            int maxRoles = (int)nudRFMaxRoles.Value;
+            var reqCopy = _rfRequirements.ToList();
+
+            lvRFResults.Items.Clear();
+            Log($"Ricerca combinazioni (max {maxRoles} ruoli, {reqCopy.Count} requisiti)...");
+
+            await RunAsync(() =>
+            {
+                var results = DynamicsOperations.FindRoleCombinations(
+                    _connection.ServiceClient, reqCopy, maxRoles, s => Log(s));
+
+                Invoke((Action)(() =>
+                {
+                    lvRFResults.Items.Clear();
+                    foreach (var combo in results)
+                    {
+                        var item = new ListViewItem(combo.Count.ToString());
+                        item.SubItems.Add(string.Join(", ", combo.RoleNames));
+                        lvRFResults.Items.Add(item);
+                    }
+                    Log($"Ricerca completata: {results.Count} combinazioni trovate.");
+                }));
+            });
+        }
+
         // ─────────── Connection ───────────
 
         private async Task ConnectAsync()
@@ -905,14 +1224,14 @@ namespace Dynamics365UserManager
 
         // ─────────── Helpers ───────────
 
-        private Button MBtn(string text, Point loc, int minWidth, bool primary = false)
+        private Button MBtn(string text, int minWidth, bool primary = false)
         {
             var font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
             int textW = TextRenderer.MeasureText(text, font).Width;
             int w = Math.Max(minWidth, textW + 24);
             var btn = new Button
             {
-                Text = text, Location = loc,
+                Text = text,
                 Size = new Size(w, 36),
                 AutoSize = false,
                 FlatStyle = FlatStyle.Flat,
@@ -928,11 +1247,11 @@ namespace Dynamics365UserManager
             return btn;
         }
 
-        private TextBox MTxt(string placeholder, Point loc, int width)
+        private TextBox MTxt(string placeholder, int width)
         {
             var txt = new TextBox
             {
-                Location = loc, Size = new Size(width, 28),
+                Size = new Size(width, 28),
                 Font = new Font("Segoe UI", 10f),
                 BackColor = AppTheme.InputBg,
                 ForeColor = AppTheme.FgPlaceholder,
@@ -944,21 +1263,20 @@ namespace Dynamics365UserManager
             return txt;
         }
 
-        private Label MLbl(string text, Point loc, bool bold = false)
+        private Label MLbl(string text, bool bold = false)
         {
             return new Label
             {
-                Text = text, Location = loc, AutoSize = true,
+                Text = text, AutoSize = true,
                 ForeColor = AppTheme.FgPrimary, BackColor = Color.Transparent,
                 Font = new Font("Segoe UI", 9f, bold ? FontStyle.Bold : FontStyle.Regular)
             };
         }
 
-        private ListView MLv(Point loc, Size size)
+        private ListView MLv()
         {
             return new ListView
             {
-                Location = loc, Size = size,
                 View = View.Details, FullRowSelect = true, GridLines = false, MultiSelect = false,
                 BackColor = AppTheme.ListBg, ForeColor = AppTheme.FgPrimary,
                 Font = new Font("Segoe UI", 9f),
@@ -966,11 +1284,11 @@ namespace Dynamics365UserManager
             };
         }
 
-        private CheckBox MCk(string text, int x, int y, bool chk = false)
+        private CheckBox MCk(string text, bool chk = false)
         {
             return new CheckBox
             {
-                Text = text, Location = new Point(x, y), Checked = chk, AutoSize = true,
+                Text = text, Checked = chk, AutoSize = true,
                 ForeColor = AppTheme.FgPrimary, BackColor = Color.Transparent,
                 Font = new Font("Segoe UI", 9f)
             };

@@ -1,15 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Identity.Client;
-using Microsoft.Xrm.Sdk;
-using Microsoft.Xrm.Sdk.WebServiceClient;
-using Microsoft.Xrm.Tooling.Connector;
-using Newtonsoft.Json.Linq;
+using Microsoft.PowerPlatform.Dataverse.Client;
+using Microsoft.PowerPlatform.Dataverse.Client.Model;
 
 namespace Dynamics365UserManager
 {
@@ -31,13 +31,14 @@ namespace Dynamics365UserManager
         private const string Authority = "https://login.microsoftonline.com/organizations";
         private const string DiscoveryUrl = "https://globaldisco.crm.dynamics.com/api/discovery/v2.0/Instances";
         private static readonly string[] DiscoveryScopes = { "https://globaldisco.crm.dynamics.com/.default" };
+        private static readonly HttpClient _httpClient = new HttpClient();
 
         private readonly string _tokenCachePath;
         private IPublicClientApplication _msalApp;
-        private CrmServiceClient _serviceClient;
+        private ServiceClient _serviceClient;
         private string _currentAccessToken;
 
-        public CrmServiceClient ServiceClient => _serviceClient;
+        public ServiceClient ServiceClient => _serviceClient;
         public bool IsConnected => _serviceClient != null && _serviceClient.IsReady;
         public EnvironmentInfo CurrentEnvironment { get; private set; }
 
@@ -116,38 +117,35 @@ namespace Dynamics365UserManager
 
             var environments = new List<EnvironmentInfo>();
 
-            using (var client = new HttpClient())
+            using var request = new HttpRequestMessage(HttpMethod.Get, DiscoveryUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _currentAccessToken);
+
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("value", out var instances))
             {
-                client.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", _currentAccessToken);
-
-                var response = await client.GetAsync(DiscoveryUrl);
-                response.EnsureSuccessStatusCode();
-
-                var json = await response.Content.ReadAsStringAsync();
-                var data = JObject.Parse(json);
-                var instances = data["value"] as JArray;
-
-                if (instances != null)
+                foreach (var instance in instances.EnumerateArray())
                 {
-                    foreach (var instance in instances)
-                    {
-                        var state = instance["State"]?.ToString();
-                        if (state != "0" && !string.Equals(state, "Enabled", StringComparison.OrdinalIgnoreCase))
-                            continue;
+                    var state = instance.TryGetProperty("State", out var stateProp) ? stateProp.ToString() : null;
+                    if (state != "0" && !string.Equals(state, "Enabled", StringComparison.OrdinalIgnoreCase))
+                        continue;
 
-                        environments.Add(new EnvironmentInfo
-                        {
-                            Id = instance["Id"]?.ToString(),
-                            FriendlyName = instance["FriendlyName"]?.ToString(),
-                            Url = instance["Url"]?.ToString(),
-                            ApiUrl = instance["ApiUrl"]?.ToString(),
-                            State = state,
-                            Purpose = instance["Purpose"]?.ToString(),
-                            Region = instance["Region"]?.ToString(),
-                            Version = instance["Version"]?.ToString()
-                        });
-                    }
+                    environments.Add(new EnvironmentInfo
+                    {
+                        Id = instance.TryGetProperty("Id", out var idProp) ? idProp.ToString() : null,
+                        FriendlyName = instance.TryGetProperty("FriendlyName", out var nameProp) ? nameProp.ToString() : null,
+                        Url = instance.TryGetProperty("Url", out var urlProp) ? urlProp.ToString() : null,
+                        ApiUrl = instance.TryGetProperty("ApiUrl", out var apiProp) ? apiProp.ToString() : null,
+                        State = state,
+                        Purpose = instance.TryGetProperty("Purpose", out var purpProp) ? purpProp.ToString() : null,
+                        Region = instance.TryGetProperty("Region", out var regProp) ? regProp.ToString() : null,
+                        Version = instance.TryGetProperty("Version", out var verProp) ? verProp.ToString() : null,
+                    });
                 }
             }
 
@@ -175,15 +173,36 @@ namespace Dynamics365UserManager
                     .ExecuteAsync();
             }
 
-            var serviceUri = new Uri(envUrl + "/XRMServices/2011/Organization.svc/web");
-            var proxy = new OrganizationWebProxyClient(serviceUri, false);
-            proxy.HeaderToken = authResult.AccessToken;
+            var cachedScopes = crmScopes;
+            var cachedApp = _msalApp;
 
-            _serviceClient = new CrmServiceClient(proxy);
+            var connectionOptions = new ConnectionOptions
+            {
+                AuthenticationType = AuthenticationType.ExternalTokenManagement,
+                ServiceUri = new Uri(envUrl),
+                AccessTokenProviderFunctionAsync = async (instanceUri) =>
+                {
+                    var accts = await cachedApp.GetAccountsAsync();
+                    try
+                    {
+                        var result = await cachedApp.AcquireTokenSilent(cachedScopes, accts.FirstOrDefault())
+                            .ExecuteAsync();
+                        return result.AccessToken;
+                    }
+                    catch (MsalUiRequiredException)
+                    {
+                        var result = await cachedApp.AcquireTokenInteractive(cachedScopes)
+                            .ExecuteAsync();
+                        return result.AccessToken;
+                    }
+                }
+            };
+
+            _serviceClient = await Task.Run(() => new ServiceClient(connectionOptions));
 
             if (!_serviceClient.IsReady)
             {
-                var error = _serviceClient.LastCrmError;
+                var error = _serviceClient.LastError;
                 _serviceClient = null;
                 throw new Exception($"Connessione fallita: {error}");
             }
@@ -207,16 +226,6 @@ namespace Dynamics365UserManager
         public void Dispose()
         {
             _serviceClient?.Dispose();
-        }
-    }
-
-    internal static class EnumerableExtensions
-    {
-        public static T FirstOrDefault<T>(this IEnumerable<T> source)
-        {
-            foreach (var item in source)
-                return item;
-            return default(T);
         }
     }
 }

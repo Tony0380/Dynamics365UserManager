@@ -55,6 +55,23 @@ namespace Dynamics365UserManager
         public int CaseCount { get; set; }
     }
 
+    public class PrivilegeRequirement
+    {
+        public string EntityLogicalName { get; set; }
+        public string EntityDisplayName { get; set; }
+        public string AccessRight { get; set; }
+        public int MinDepthMask { get; set; }
+        public string DepthDisplayName { get; set; }
+        public override string ToString() => $"{AccessRight} {EntityDisplayName} ({DepthDisplayName})";
+    }
+
+    public class RoleCombinationResult
+    {
+        public List<string> RoleNames { get; set; } = new List<string>();
+        public int Count => RoleNames.Count;
+        public override string ToString() => string.Join(" + ", RoleNames);
+    }
+
     public static class DynamicsOperations
     {
         public static List<UserInfo> SearchUsers(IOrganizationService service, string searchText)
@@ -812,6 +829,171 @@ namespace Dynamics365UserManager
             }
 
             return result;
+        }
+
+        // ─────────── Role Finder ───────────
+
+        public static List<RoleCombinationResult> FindRoleCombinations(
+            IOrganizationService service,
+            List<PrivilegeRequirement> requirements,
+            int maxRoles,
+            Action<string> log)
+        {
+            if (requirements.Count == 0)
+                return new List<RoleCombinationResult>();
+
+            log("Risoluzione privilegi...");
+
+            var reqRoleSets = new List<HashSet<string>>();
+            var allRoleNames = new HashSet<string>();
+
+            foreach (var req in requirements)
+            {
+                var privId = FindPrivilegeId(service, req.EntityLogicalName, req.AccessRight);
+                if (privId == null)
+                {
+                    log($"  Privilegio non trovato: prv{req.AccessRight}{req.EntityLogicalName}");
+                    log("  Verificare che l'entita' esista nell'ambiente.");
+                    return new List<RoleCombinationResult>();
+                }
+
+                var roleNames = GetRoleNamesWithPrivilege(service, privId.Value, req.MinDepthMask);
+                reqRoleSets.Add(roleNames);
+                allRoleNames.UnionWith(roleNames);
+                log($"  {req}: {roleNames.Count} ruoli");
+            }
+
+            if (allRoleNames.Count == 0)
+            {
+                log("Nessun ruolo candidato trovato.");
+                return new List<RoleCombinationResult>();
+            }
+
+            // Build role -> satisfied requirements index
+            var roleList = allRoleNames.OrderBy(n => n).ToList();
+            var roleCoverage = new Dictionary<string, HashSet<int>>();
+            foreach (var name in roleList)
+            {
+                var covered = new HashSet<int>();
+                for (int i = 0; i < reqRoleSets.Count; i++)
+                    if (reqRoleSets[i].Contains(name))
+                        covered.Add(i);
+                roleCoverage[name] = covered;
+            }
+
+            // Sort candidates by coverage (most-covering first)
+            roleList = roleList.OrderByDescending(r => roleCoverage[r].Count).ToList();
+            log($"Ruoli candidati: {roleList.Count}");
+
+            int totalReqs = requirements.Count;
+            var results = new List<RoleCombinationResult>();
+
+            log("Ricerca combinazioni...");
+
+            for (int size = 1; size <= Math.Min(maxRoles, roleList.Count); size++)
+            {
+                int maxCandidates = size switch { 1 => 500, 2 => 200, 3 => 80, 4 => 40, _ => 25 };
+                var candidates = roleList.Count > maxCandidates
+                    ? roleList.Take(maxCandidates).ToList()
+                    : roleList;
+
+                if (candidates.Count < roleList.Count)
+                    log($"  Combinazioni di {size} (top {candidates.Count} ruoli)...");
+                else
+                    log($"  Combinazioni di {size}...");
+
+                int found = 0;
+                foreach (var combo in Combinations(candidates.Count, size))
+                {
+                    var covered = new HashSet<int>();
+                    foreach (int idx in combo)
+                        covered.UnionWith(roleCoverage[candidates[idx]]);
+
+                    if (covered.Count == totalReqs)
+                    {
+                        results.Add(new RoleCombinationResult
+                        {
+                            RoleNames = combo.Select(i => candidates[i]).OrderBy(n => n).ToList()
+                        });
+                        found++;
+                        if (found >= 200) break;
+                    }
+                }
+
+                log($"    {found} combinazioni trovate");
+                if (results.Count >= 500) break;
+            }
+
+            return results.OrderBy(r => r.Count).ThenBy(r => r.ToString()).ToList();
+        }
+
+        private static Guid? FindPrivilegeId(IOrganizationService service, string entityLogicalName, string accessRightName)
+        {
+            string privName = "prv" + accessRightName + entityLogicalName;
+            var query = new QueryExpression("privilege")
+            {
+                ColumnSet = new ColumnSet("privilegeid"),
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("name", ConditionOperator.Equal, privName)
+                    }
+                },
+                TopCount = 1
+            };
+
+            var result = service.RetrieveMultiple(query);
+            return result.Entities.Count > 0 ? result.Entities[0].Id : (Guid?)null;
+        }
+
+        private static HashSet<string> GetRoleNamesWithPrivilege(
+            IOrganizationService service, Guid privilegeId, int minDepth)
+        {
+            var query = new QueryExpression("role")
+            {
+                ColumnSet = new ColumnSet("name"),
+                LinkEntities =
+                {
+                    new LinkEntity("role", "roleprivileges", "roleid", "roleid", JoinOperator.Inner)
+                    {
+                        LinkCriteria = new FilterExpression
+                        {
+                            Conditions =
+                            {
+                                new ConditionExpression("privilegeid", ConditionOperator.Equal, privilegeId),
+                                new ConditionExpression("privilegedepthmask", ConditionOperator.GreaterEqual, minDepth)
+                            }
+                        }
+                    }
+                }
+            };
+
+            var names = new HashSet<string>();
+            var results = service.RetrieveMultiple(query);
+            foreach (var e in results.Entities)
+            {
+                var name = e.GetAttributeValue<string>("name");
+                if (!string.IsNullOrEmpty(name))
+                    names.Add(name);
+            }
+            return names;
+        }
+
+        private static IEnumerable<int[]> Combinations(int n, int k)
+        {
+            if (k > n || k <= 0) yield break;
+            var c = new int[k];
+            for (int i = 0; i < k; i++) c[i] = i;
+            while (true)
+            {
+                yield return c;
+                int pos = k - 1;
+                while (pos >= 0 && c[pos] == n - k + pos) pos--;
+                if (pos < 0) yield break;
+                c[pos]++;
+                for (int j = pos + 1; j < k; j++) c[j] = c[j - 1] + 1;
+            }
         }
     }
 }

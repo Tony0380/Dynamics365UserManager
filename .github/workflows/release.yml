@@ -14,26 +14,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
-      - name: Setup NuGet
-        uses: nuget/setup-nuget@v2
-
-      - name: Restore NuGet packages
-        run: nuget restore Dynamics365UserManager.sln
+      - name: Restore dependencies
+        run: dotnet restore
 
       - name: Build Release
-        run: msbuild Dynamics365UserManager.sln /p:Configuration=Release /p:Platform="Any CPU"
+        run: dotnet build -c Release --no-restore
+
+      - name: Publish single-file executable
+        run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Dynamics365UserManager
-          path: bin/Release/Dynamics365UserManager.exe
+          path: ./publish/Dynamics365UserManager.exe
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: bin/Release/Dynamics365UserManager.exe
+          files: ./publish/Dynamics365UserManager.exe
           generate_release_notes: true
