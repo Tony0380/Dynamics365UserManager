@@ -2,7 +2,7 @@
 
 [![Build & Release](https://github.com/Tony0380/Dynamics365UserManager/actions/workflows/release.yml/badge.svg)](https://github.com/Tony0380/Dynamics365UserManager/actions/workflows/release.yml)
 
-Applicazione Windows Forms (.NET Framework 4.6.2) per la gestione utenti in ambienti Microsoft Dynamics 365.
+Applicazione Windows Forms (.NET 8.0) per la gestione utenti in ambienti Microsoft Dynamics 365.
 
 ## Funzionalita
 
@@ -29,25 +29,40 @@ Applicazione Windows Forms (.NET Framework 4.6.2) per la gestione utenti in ambi
 - Anteprima con conteggio record
 - Doppia conferma per operazioni distruttive
 
+### Tab 4 - Security Roles
+- Ricerca ruoli per nome
+- Visualizzazione utenti assegnati a un ruolo
+- Assegnazione e rimozione ruoli da utenti (anche multi-selezione)
+
+### Tab 5 - Teams
+- Ricerca team per nome
+- Visualizzazione membri del team
+- Aggiunta e rimozione utenti dai team (anche multi-selezione)
+
+### Tab 6 - Trova Ruoli
+- Selezione entita, tipo di permesso (Create, Read, Write, Delete, Append, AppendTo, Assign, Share) e livello di profondita (User, BU, BU+Child, Organization)
+- Ricerca automatica delle combinazioni minime di Security Roles che soddisfano tutti i requisiti
+- Risultati ordinati per numero di ruoli
+
 ## Prerequisiti
 
-- .NET Framework 4.6.2
-- Visual Studio 2017+
+- .NET 8.0 SDK
+- Visual Studio 2022+ o `dotnet` CLI
 
 ## NuGet Packages
 
 | Package | Versione |
 |---|---|
-| Microsoft.CrmSdk.XrmTooling.CoreAssembly | 9.1.1.65 |
-| Microsoft.Identity.Client | 4.61.3 |
-| Newtonsoft.Json | 13.0.3 |
+| Microsoft.PowerPlatform.Dataverse.Client | 1.1.35 |
+| Microsoft.Identity.Client | 4.67.2 |
+| System.Security.Cryptography.ProtectedData | 9.0.4 |
 
 ## Setup
 
 1. Aprire `Dynamics365UserManager.sln` in Visual Studio
-2. Ripristinare i pacchetti NuGet (`nuget restore` o tramite Visual Studio)
-3. Compilare in configurazione Release
-4. L'eseguibile si trova in `bin\Release\`
+2. Ripristinare i pacchetti NuGet (`dotnet restore` o tramite Visual Studio)
+3. Compilare in configurazione Release: `dotnet build -c Release`
+4. L'eseguibile si trova in `bin\Release\net8.0-windows\`
 
 ## Utilizzo
 
@@ -56,19 +71,18 @@ Applicazione Windows Forms (.NET Framework 4.6.2) per la gestione utenti in ambi
 3. Utilizzare i tab per le operazioni desiderate
 
 ### Reset Login
-Il pulsante **Reset Login** cancella la cache dei token e forza un nuovo login al prossimo tentativo di connessione.
+Il pulsante **Cancella Credenziali** cancella la cache dei token e forza un nuovo login al prossimo tentativo di connessione.
 
 ## Struttura Progetto
 
 ```
 Dynamics365UserManager/
 ├── Program.cs                 # Entry point
-├── MainForm.cs                # Form principale con tab
+├── MainForm.cs                # Form principale con 6 tab
+├── AppTheme.cs                # Tema colori (light/dark)
 ├── EnvironmentSelector.cs     # Dialog selezione ambiente
 ├── ConnectionManager.cs       # Gestione connessione, MSAL, discovery
-├── DynamicsOperations.cs      # Operazioni CRM (query, assign, clone)
-└── Properties/
-    └── AssemblyInfo.cs
+└── DynamicsOperations.cs      # Operazioni Dataverse (query, assign, clone, role finder)
 ```
 
 ## ClientId OAuth
